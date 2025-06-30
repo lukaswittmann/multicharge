@@ -132,10 +132,13 @@ end subroutine get_eeqbc_charges
 
 
 !> Obtain charges from the epsilon dependent electronegativity equilibration model
-subroutine get_eeqbceps_charges(mol, error, qvec, dqdr, dqdL)
+subroutine get_eeqbceps_charges(mol, epsilon, error, qvec, dqdr, dqdL)
 
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
+
+   !> Dielectric permittivity of the medium
+   real(wp), intent(in) :: epsilon
 
    !> Error handling
    type(error_type), allocatable, intent(out) :: error
@@ -151,7 +154,7 @@ subroutine get_eeqbceps_charges(mol, error, qvec, dqdr, dqdL)
 
    class(mchrg_model_type), allocatable :: eeqbceps_model
 
-   call new_eeqbceps2025_model(mol, eeqbceps_model, error)
+   call new_eeqbceps2025_model(mol, eeqbceps_model, error, epsilon=epsilon)
 
    call get_charges(eeqbceps_model, mol, error, qvec, dqdr, dqdL)
 
