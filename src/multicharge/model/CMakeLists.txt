@@ -13,8 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-srcs += files(
-  'eeq2019.f90',
-  'eeqbc2024.f90',
-  'eeqbceps2025.f90',
+
+set(dir "${CMAKE_CURRENT_SOURCE_DIR}")
+
+list(
+  APPEND srcs
+  "${dir}/eeq.f90"
+  "${dir}/eeqbc.f90"
+  "${dir}/type.F90"
 )
+
+set(srcs "${srcs}" PARENT_SCOPE)

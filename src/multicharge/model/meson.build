@@ -13,8 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 srcs += files(
-  'eeq2019.f90',
-  'eeqbc2024.f90',
-  'eeqbceps2025.f90',
+  'eeq.f90',
+  'eeqbc.f90',
+  'eeqbceps.f90',
+  'type.F90',
 )

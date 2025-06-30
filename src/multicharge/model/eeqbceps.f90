@@ -1,0 +1,792 @@
+! This file is part of multicharge.
+! SPDX-Identifier: Apache-2.0
+!
+! Licensed under the Apache License, Version 2.0 (the "License");
+! you may not use this file except in compliance with the License.
+! You may obtain a copy of the License at
+!
+!     http://www.apache.org/licenses/LICENSE-2.0
+!
+! Unless required by applicable law or agreed to in writing, software
+! distributed under the License is distributed on an "AS IS" BASIS,
+! WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+! See the License for the specific language governing permissions and
+! limitations under the License.
+
+!> @file multicharge/model/eeqbceps.f90
+!> Provides implementation of the bond capacitor electronegativity equilibration model (EEQ_BC)
+
+!> Bond capacitor electronegativity equilibration charge model
+module multicharge_model_eeqbceps
+
+   use iso_fortran_env, only: output_unit
+
+   use mctc_env, only: error_type, wp
+   use mctc_io, only: structure_type
+   use mctc_io_constants, only: pi
+   use mctc_io_convert, only: autoaa
+   use mctc_io_math, only: matdet_3x3
+   use mctc_ncoord, only: new_ncoord, cn_count
+   use multicharge_wignerseitz, only: wignerseitz_cell_type
+   use multicharge_model_type, only: mchrg_model_type, get_dir_trans, get_rec_trans
+   use multicharge_blas, only: gemv, gemm
+   use multicharge_model_cache, only: cache_container, model_cache
+   implicit none
+   private
+
+   public :: eeqbceps_model, new_eeqbceps_model
+
+   !> Cache for the EEQ-BC charge model
+   type, extends(model_cache) :: eeqbceps_cache
+      !> Local charges
+      real(wp), allocatable :: qloc(:)
+      !> Local charge dr derivative
+      real(wp), allocatable :: dqlocdr(:, :, :)
+      !> Local charge dL derivative
+      real(wp), allocatable :: dqlocdL(:, :, :)
+      !> Full Maxwell capacitance matrix for 0d case
+      real(wp), allocatable :: cmat(:, :)
+      !> Diagonal elements of Maxwell capacitance matrix for every WSC image
+      real(wp), allocatable :: cdiag(:, :)
+      !> Derivative of Maxwell capacitance matrix w.r.t positions
+      real(wp), allocatable :: dcdr(:, :, :)
+      !> Derivative of Maxwell capacitance matrix w.r.t lattice vectors
+      real(wp), allocatable :: dcdL(:, :, :)
+      !> Store tmp array from xvec calculation for reuse
+      real(wp), allocatable :: xtmp(:)
+   end type eeqbceps_cache
+
+   type, extends(mchrg_model_type) :: eeqbceps_model
+      !> Bond capacitance
+      real(wp), allocatable :: cap(:)
+      !> Average coordination number
+      real(wp), allocatable :: avg_cn(:)
+      !> Exponent of error function in bond capacitance
+      real(wp) :: kbc
+      !> Exponent of the distance/CN normalization
+      real(wp) :: norm_exp
+      !> vdW radii
+      real(wp), allocatable :: rvdw(:, :)
+      !> Born radii for implicit Born model
+      real(wp), allocatable :: radii(:)
+      !> Epsilon for the implicit Born model
+      real(wp) :: eps
+   contains
+      !> Update and allocate cache
+      procedure :: update
+      !> Calculate Coulomb matrix
+      procedure :: get_coulomb_matrix
+      !> Calculate derivatives of Coulomb matrix
+      procedure :: get_coulomb_derivs
+      !> Calculate right-hand side (electronegativity vector)
+      procedure :: get_xvec
+      !> Calculate derivatives of EN vector
+      procedure :: get_xvec_derivs
+      !> Calculate Coulomb matrix
+      procedure :: get_amat_0d
+      !> Calculate Coulomb matrix derivative
+      procedure :: get_damat_0d
+      !> Calculate constraint matrix (molecular case)
+      procedure :: get_cmat_0d
+      !> Calculate constraint matrix derivatives (molecular)
+      procedure :: get_dcmat_0d
+   end type eeqbceps_model
+
+   real(wp), parameter :: sqrtpi = sqrt(pi)
+   real(wp), parameter :: sqrt2pi = sqrt(2.0_wp/pi)
+   real(wp), parameter :: eps = sqrt(epsilon(0.0_wp))
+
+   !> Default exponent of distance/CN normalization
+   real(wp), parameter :: default_norm_exp = 1.0_wp
+
+   !> Default exponent of error function in bond capacitance
+   real(wp), parameter :: default_kbc = 0.65_wp
+contains
+
+   subroutine new_eeqbceps_model(self, mol, error, chi, rad, &
+      & eta, kcnchi, kqchi, kqeta, kcnrad, cap, avg_cn, & 
+      & kbc, cutoff, cn_exp, rcov, en, cn_max, norm_exp, rvdw, &
+      & radii, epsilon)
+      !> Bond capacitor electronegativity equilibration model
+      type(eeqbceps_model), intent(out) :: self
+      !> Molecular structure data
+      type(structure_type), intent(in) :: mol
+      !> Error handling
+      type(error_type), allocatable, intent(out) :: error
+      !> Electronegativity
+      real(wp), intent(in) :: chi(:)
+      !> Exponent gaussian charge
+      real(wp), intent(in) :: rad(:)
+      !> Chemical hardness
+      real(wp), intent(in) :: eta(:)
+      !> CN scaling factor for electronegativity
+      real(wp), intent(in) :: kcnchi(:)
+      !> Local charge scaling factor for electronegativity
+      real(wp), intent(in) :: kqchi(:)
+      !> Local charge scaling factor for chemical hardness
+      real(wp), intent(in) :: kqeta(:)
+      !> CN scaling factor for charge width
+      real(wp), intent(in) :: kcnrad
+      !> Bond capacitance
+      real(wp), intent(in) :: cap(:)
+      !> Average coordination number
+      real(wp), intent(in) :: avg_cn(:)
+      !> Exponent of error function in bond capacitance
+      real(wp), intent(in), optional :: kbc
+      !> Exponent of the distance normalization
+      real(wp), intent(in), optional :: norm_exp
+      !> Cutoff radius for coordination number
+      real(wp), intent(in), optional :: cutoff
+      !> Steepness of the CN counting function
+      real(wp), intent(in), optional :: cn_exp
+      !> Covalent radii for CN
+      real(wp), intent(in), optional :: rcov(:)
+      !> Maximum CN cutoff for CN
+      real(wp), intent(in), optional :: cn_max
+      !> Pauling electronegativities normalized to fluorine
+      real(wp), intent(in), optional :: en(:)
+      !> Van-der-Waals radii
+      real(wp), intent(in), optional :: rvdw(:, :)
+      !> Born radii for implicit Born model
+      real(wp), intent(in), optional :: radii(:)
+      !> Epsilon for the implicit Born model
+      real(wp), intent(in), optional :: epsilon
+
+      self%chi = chi
+      self%rad = rad
+      self%eta = eta
+      self%kcnchi = kcnchi
+      self%kqchi = kqchi
+      self%kqeta = kqeta
+      self%kcnrad = kcnrad
+      self%cap = cap
+      self%avg_cn = avg_cn
+      self%rvdw = rvdw
+      self%radii = radii
+      self%eps = epsilon
+
+      if (present(kbc)) then
+         self%kbc = kbc
+      else
+         self%kbc = default_kbc
+      end if
+
+      if (present(norm_exp)) then
+         self%norm_exp = norm_exp
+      else
+         self%norm_exp = default_norm_exp
+      end if
+
+      ! Coordination number
+      call new_ncoord(self%ncoord, mol, cn_count%erf, error, &
+         & cutoff=cutoff, kcn=cn_exp, rcov=rcov, cut=cn_max, &
+         & norm_exp=self%norm_exp)
+      ! Electronegativity weighted coordination number for local charge
+      call new_ncoord(self%ncoord_en, mol, cn_count%erf_en, error, & 
+         & cutoff=cutoff, kcn=cn_exp, rcov=rcov, en=en, cut=cn_max, &
+         & norm_exp=self%norm_exp)
+
+   end subroutine new_eeqbceps_model
+
+   subroutine update(self, mol, cache, cn, qloc, dcndr, dcndL, dqlocdr, dqlocdL)
+      class(eeqbceps_model), intent(in) :: self
+      type(structure_type), intent(in) :: mol
+      type(cache_container), intent(inout) :: cache
+      real(wp), intent(in) :: cn(:)
+      real(wp), intent(in), optional :: qloc(:)
+      real(wp), intent(in), optional :: dcndr(:, :, :)
+      real(wp), intent(in), optional :: dcndL(:, :, :)
+      real(wp), intent(in), optional :: dqlocdr(:, :, :)
+      real(wp), intent(in), optional :: dqlocdL(:, :, :)
+
+      logical :: grad
+
+      type(eeqbceps_cache), pointer :: ptr
+
+      call taint(cache, ptr)
+      call ptr%update(mol)
+
+      grad = present(dcndr) .and. present(dcndL) .and. present(dqlocdr) .and. present(dqlocdL)
+
+      ! Refer CN and local charge arrays in cache
+      ptr%cn = cn
+      if (present(qloc)) then
+         ptr%qloc = qloc
+      else
+         error stop "qloc required for eeqbceps"
+      end if
+
+      if (grad) then
+         ptr%dcndr = dcndr
+         ptr%dcndL = dcndL
+         ptr%dqlocdr = dqlocdr
+         ptr%dqlocdL = dqlocdL
+      end if
+
+      ! Allocate (for get_xvec and xvec_derivs)
+      if (.not. allocated(ptr%xtmp)) then
+         allocate (ptr%xtmp(mol%nat + 1))
+      end if
+
+      if (any(mol%periodic)) then
+         
+         stop "Periodic eeqbceps model not implemented"
+         
+      else
+         ! Allocate cmat
+         if (.not. allocated(ptr%cmat)) then
+            allocate (ptr%cmat(mol%nat + 1, mol%nat + 1))
+         end if
+         call self%get_cmat_0d(mol, ptr%cmat)
+
+         ! cmat gradients
+         if (grad) then
+            if (.not. allocated(ptr%dcdr) .and. .not. allocated(ptr%dcdL)) then
+               allocate (ptr%dcdr(3, mol%nat, mol%nat + 1), ptr%dcdL(3, 3, mol%nat + 1))
+            end if
+            call self%get_dcmat_0d(mol, ptr%dcdr, ptr%dcdL)
+         end if
+      end if
+
+   end subroutine update
+
+   subroutine get_xvec(self, mol, cache, xvec)
+      class(eeqbceps_model), intent(in) :: self
+      type(structure_type), intent(in) :: mol
+      type(cache_container), intent(inout) :: cache
+      real(wp), intent(out) :: xvec(:)
+
+      type(eeqbceps_cache), pointer :: ptr
+
+      integer :: iat, izp
+
+      call view(cache, ptr)
+
+      !$omp parallel do default(none) schedule(runtime) &
+      !$omp shared(mol, self, ptr) private(iat, izp)
+      do iat = 1, mol%nat
+         izp = mol%id(iat)
+         ptr%xtmp(iat) = -self%chi(izp) + self%kcnchi(izp)*ptr%cn(iat) &
+            & + self%kqchi(izp)*ptr%qloc(iat)
+      end do
+      ptr%xtmp(mol%nat + 1) = mol%charge
+      call gemv(ptr%cmat, ptr%xtmp, xvec)
+
+   end subroutine get_xvec
+
+   subroutine get_xvec_derivs(self, mol, cache, dxdr, dxdL)
+      class(eeqbceps_model), intent(in) :: self
+      type(structure_type), intent(in) :: mol
+      type(cache_container), intent(inout) :: cache
+      real(wp), intent(out) :: dxdr(:, :, :)
+      real(wp), intent(out) :: dxdL(:, :, :)
+
+      type(eeqbceps_cache), pointer :: ptr
+
+      integer :: iat, izp, jat
+      real(wp) :: tmp(3)
+      real(wp), allocatable :: dtmpdr(:, :, :), dtmpdL(:, :, :)
+
+      ! Thread-private arrays for reduction
+      real(wp), allocatable :: dxdr_local(:, :, :), dxdL_local(:, :, :)
+
+      call view(cache, ptr)
+      allocate (dtmpdr(3, mol%nat, mol%nat + 1), dtmpdL(3, 3, mol%nat + 1))
+
+      dxdr(:, :, :) = 0.0_wp
+      dxdL(:, :, :) = 0.0_wp
+      dtmpdr(:, :, :) = 0.0_wp
+      dtmpdL(:, :, :) = 0.0_wp
+
+      !$omp parallel do default(none) schedule(runtime) &
+      !$omp shared(mol, self, ptr, dtmpdr, dtmpdL) &
+      !$omp private(iat, izp)
+      do iat = 1, mol%nat
+         izp = mol%id(iat)
+         ! CN and effective charge derivative
+         dtmpdr(:, :, iat) = self%kcnchi(izp)*ptr%dcndr(:, :, iat) + dtmpdr(:, :, iat)
+         dtmpdL(:, :, iat) = self%kcnchi(izp)*ptr%dcndL(:, :, iat) + dtmpdL(:, :, iat)
+         dtmpdr(:, :, iat) = self%kqchi(izp)*ptr%dqlocdr(:, :, iat) + dtmpdr(:, :, iat)
+         dtmpdL(:, :, iat) = self%kqchi(izp)*ptr%dqlocdL(:, :, iat) + dtmpdL(:, :, iat)
+      end do
+
+      call gemm(dtmpdr, ptr%cmat, dxdr)
+      call gemm(dtmpdL, ptr%cmat, dxdL)
+
+      !$omp parallel do default(none) schedule(runtime) &
+      !$omp shared(mol, self, ptr, dxdr) &
+      !$omp private(iat, izp, tmp)
+      do iat = 1, mol%nat
+         tmp = 0.0_wp 
+         do jat = 1, mol%nat
+            ! Diagonal elements
+            tmp(:) = tmp(:) + ptr%xtmp(jat)*ptr%dcdr(:, iat, jat) 
+            ! Derivative of capacitance matrix
+            dxdr(:, iat, jat) = (ptr%xtmp(iat) - ptr%xtmp(jat))*ptr%dcdr(:, iat, jat) &
+               & + dxdr(:, iat, jat)
+         end do
+         dxdr(:, iat, iat) = dxdr(:, iat, iat) + tmp(:)
+      end do
+
+   end subroutine get_xvec_derivs
+
+   subroutine get_coulomb_matrix(self, mol, cache, amat)
+      class(eeqbceps_model), intent(in) :: self
+      type(structure_type), intent(in) :: mol
+      type(cache_container), intent(inout) :: cache
+      real(wp), intent(out) :: amat(:, :)
+
+      type(eeqbceps_cache), pointer :: ptr
+      call view(cache, ptr)
+
+      if (any(mol%periodic)) then
+         stop "Periodic eeqbceps model not implemented"
+      else
+         call self%get_amat_0d(mol, ptr%cn, ptr%qloc, ptr%cmat, amat)
+      end if
+   end subroutine get_coulomb_matrix
+
+   subroutine get_amat_0d(self, mol, cn, qloc, cmat, amat)
+      class(eeqbceps_model), intent(in) :: self
+      type(structure_type), intent(in) :: mol
+      real(wp), intent(in) :: cn(:)
+      real(wp), intent(in) :: qloc(:)
+      real(wp), intent(in) :: cmat(:, :)
+      real(wp), intent(out) :: amat(:, :)
+
+      integer :: iat, jat, izp, jzp
+      real(wp) :: vec(3), r2, gam2, tmp, norm_cn, radi, radj
+      real(wp) :: Jij, Fij, Jii, Fii, fGB2, aiaj, expfac, feps
+
+      ! Thread-private array for reduction
+      real(wp), allocatable :: amat_local(:, :)
+   
+      amat(:, :) = 0.0_wp
+   
+      feps = (1.0_wp - 1.0_wp/self%eps)
+
+      !!$omp parallel default(none) &
+      !!$omp shared(amat, mol, self, cn, qloc, cmat) &
+      !!$omp private(iat, izp, jat, jzp, gam2, vec, r2, tmp) &
+      !!$omp private(norm_cn, radi, radj, amat_local)
+      allocate(amat_local, source=amat)
+      !!$omp do schedule(runtime) 
+      do iat = 1, mol%nat
+         izp = mol%id(iat)
+         ! Effective charge width of i
+         norm_cn = 1.0_wp / self%avg_cn(izp)**self%norm_exp
+         radi = self%rad(izp) * (1.0_wp - self%kcnrad*cn(iat)*norm_cn)
+         do jat = 1, iat - 1
+            jzp = mol%id(jat)
+            vec = mol%xyz(:, jat) - mol%xyz(:, iat)
+            r2 = vec(1)**2 + vec(2)**2 + vec(3)**2
+            ! Effective charge width of j
+            norm_cn = cn(jat) / self%avg_cn(jzp)**self%norm_exp
+            radj = self%rad(jzp) * (1.0_wp - self%kcnrad*norm_cn)
+
+
+            ! ! Coulomb interaction of Gaussian charges
+            ! gam2 = 1.0_wp / (radi**2 + radj**2)
+            ! tmp = erf(sqrt(r2*gam2)) / sqrt(r2) * cmat(jat, iat)
+            
+            
+            ! standard erf-kernel
+            gam2   = 1.0_wp/(radi**2 + radj**2)
+            Jij    = erf(sqrt(r2*gam2)) / sqrt(r2)
+            ! GB reaction kernel
+            aiaj   = self%radii(izp)*self%radii(jzp)
+            expfac = exp(-r2/(4.0_wp*aiaj))
+            fGB2   = r2 + aiaj*expfac
+            Fij    = feps / sqrt(fGB2)
+            ! subtract GB from Coulomb kernel
+            tmp    = (Jij - Fij) * cmat(jat, iat)
+                        
+            
+            amat_local(jat, iat) = amat_local(jat, iat) + tmp
+            amat_local(iat, jat) = amat_local(iat, jat) + tmp
+         end do
+
+         ! ! Effective hardness
+         ! tmp = self%eta(izp) + self%kqeta(izp) * qloc(iat) + sqrt2pi / radi
+
+         ! Vacuum self‐term J_ii
+         Jii = sqrt2pi / radi
+         ! Reaction self‐term F_ii
+         Fii = (1.0_wp - 1.0_wp/self%eps) / self%radii(izp)
+         ! Effective hardness
+         tmp = self%eta(izp) + self%kqeta(izp) * qloc(iat) &
+            + Jii - Fii
+
+         amat_local(iat, iat) = amat_local(iat, iat) + tmp*cmat(iat, iat) + 1.0_wp
+      end do
+      !!$omp end do
+      !!$omp critical (get_amat_0d_)
+      amat(:, :) = amat(:, :) + amat_local(:, :)
+      !!$omp end critical (get_amat_0d_)
+      deallocate(amat_local)
+      !!$omp end parallel
+
+      amat(mol%nat + 1, 1:mol%nat + 1) = 1.0_wp
+      amat(1:mol%nat + 1, mol%nat + 1) = 1.0_wp
+      amat(mol%nat + 1, mol%nat + 1) = 0.0_wp
+
+   end subroutine get_amat_0d
+
+   subroutine get_coulomb_derivs(self, mol, cache, qvec, dadr, dadL, atrace)
+      class(eeqbceps_model), intent(in) :: self
+      type(structure_type), intent(in) :: mol
+      real(wp), intent(in) :: qvec(:)
+      type(cache_container), intent(inout) :: cache
+      real(wp), intent(out) :: dadr(:, :, :), dadL(:, :, :), atrace(:, :)
+
+      type(eeqbceps_cache), pointer :: ptr
+      call view(cache, ptr)
+
+      if (any(mol%periodic)) then
+         stop "Periodic eeqbceps model not implemented"
+      else
+         call self%get_damat_0d(mol, ptr%cn, &
+         & ptr%qloc, qvec, ptr%dcndr, ptr%dcndL, ptr%dqlocdr, &
+         & ptr%dqlocdL, ptr%cmat, ptr%dcdr, ptr%dcdL, dadr, dadL, atrace)
+      end if
+   end subroutine get_coulomb_derivs
+
+   subroutine get_damat_0d(self, mol, cn, qloc, qvec, dcndr, dcndL, &
+         & dqlocdr, dqlocdL, cmat, dcdr, dcdL, dadr, dadL, atrace)
+      class(eeqbceps_model), intent(in) :: self
+      type(structure_type), intent(in) :: mol
+      real(wp), intent(in) :: cn(:)
+      real(wp), intent(in) :: qloc(:)
+      real(wp), intent(in) :: qvec(:)
+      real(wp), intent(in) :: dcndr(:, :, :)
+      real(wp), intent(in) :: dcndL(:, :, :)
+      real(wp), intent(in) :: dqlocdr(:, :, :)
+      real(wp), intent(in) :: dqlocdL(:, :, :)
+      real(wp), intent(in) :: cmat(:, :)
+      real(wp), intent(in) :: dcdr(:, :, :)
+      real(wp), intent(in) :: dcdL(:, :, :)
+      real(wp), intent(out) :: dadr(:, :, :)
+      real(wp), intent(out) :: dadL(:, :, :)
+      real(wp), intent(out) :: atrace(:, :)
+
+      integer :: iat, jat, izp, jzp
+      real(wp) :: vec(3), r2, gam, arg, dtmp, norm_cn
+      real(wp) :: radi, radj, dradi, dradj, dG(3), dS(3, 3), dgamdL(3, 3)
+      real(wp), allocatable :: dgamdr(:, :)
+
+      ! Thread-private arrays for reduction
+      real(wp), allocatable :: atrace_local(:, :)
+      real(wp), allocatable :: dadr_local(:, :, :), dadL_local(:, :, :)
+
+      allocate (dgamdr(3, mol%nat))
+
+      atrace(:, :) = 0.0_wp
+      dadr(:, :, :) = 0.0_wp
+      dadL(:, :, :) = 0.0_wp
+
+      !$omp parallel default(none) &
+      !$omp shared(atrace, dadr, dadL, mol, self, cn, qloc, qvec) &
+      !$omp shared(cmat, dcdr, dcdL, dcndr, dcndL, dqlocdr, dqlocdL) &
+      !$omp private(iat, izp, jat, jzp, gam, vec, r2, dtmp, norm_cn, arg) &
+      !$omp private(radi, radj, dradi, dradj, dgamdr, dgamdL, dG, dS) &
+      !$omp private(atrace_local, dadr_local, dadL_local)
+      allocate(atrace_local, source=atrace)
+      allocate(dadr_local, source=dadr)
+      allocate(dadL_local, source=dadL)
+      !$omp do schedule(runtime)
+      do iat = 1, mol%nat
+         izp = mol%id(iat)
+         ! Effective charge width of i
+         norm_cn = 1.0_wp/self%avg_cn(izp)**self%norm_exp
+         radi = self%rad(izp)*(1.0_wp - self%kcnrad*cn(iat)*norm_cn)
+         dradi = -self%rad(izp)*self%kcnrad*norm_cn
+         do jat = 1, iat - 1
+            jzp = mol%id(jat)
+            vec = mol%xyz(:, jat) - mol%xyz(:, iat)
+            r2 = vec(1)**2 + vec(2)**2 + vec(3)**2
+            ! Effective charge width of j
+            norm_cn = 1.0_wp/self%avg_cn(jzp)**self%norm_exp
+            radj = self%rad(jzp)*(1.0_wp - self%kcnrad*cn(jat)*norm_cn)
+            dradj = -self%rad(jzp)*self%kcnrad*norm_cn
+
+            ! Coulomb interaction of Gaussian charges
+            gam = 1.0_wp/sqrt(radi**2 + radj**2)
+            dgamdr(:, :) = -(radi*dradi*dcndr(:, :, iat) + radj*dradj*dcndr(:, :, jat)) &
+                          & *gam**3.0_wp
+            dgamdL(:, :) = -(radi*dradi*dcndL(:, :, iat) + radj*dradj*dcndL(:, :, jat)) &
+                          & *gam**3.0_wp
+
+            ! Explicit derivative
+            arg = gam*gam*r2
+            dtmp = 2.0_wp*gam*exp(-arg)/(sqrtpi*r2) &
+               & - erf(sqrt(arg))/(r2*sqrt(r2))
+            dG(:) = -dtmp*vec ! questionable sign
+            dS(:, :) = spread(dG, 1, 3)*spread(vec, 2, 3)
+            atrace_local(:, iat) = +dG*qvec(jat)*cmat(jat, iat) + atrace_local(:, iat)
+            atrace_local(:, jat) = -dG*qvec(iat)*cmat(iat, jat) + atrace_local(:, jat)
+            dadr_local(:, iat, jat) = +dG*qvec(iat)*cmat(iat, jat) + dadr_local(:, iat, jat)
+            dadr_local(:, jat, iat) = -dG*qvec(jat)*cmat(jat, iat) + dadr_local(:, jat, iat)
+            dadL_local(:, :, jat) = +dS*qvec(iat)*cmat(iat, jat) + dadL_local(:, :, jat)
+            dadL_local(:, :, iat) = +dS*qvec(jat)*cmat(jat, iat) + dadL_local(:, :, iat)
+
+            ! Effective charge width derivative
+            dtmp = 2.0_wp*exp(-arg)/(sqrtpi)
+            atrace_local(:, iat) = -dtmp*qvec(jat)*dgamdr(:, jat)*cmat(jat, iat) + atrace_local(:, iat)
+            atrace_local(:, jat) = -dtmp*qvec(iat)*dgamdr(:, iat)*cmat(iat, jat) + atrace_local(:, jat)
+            dadr_local(:, iat, jat) = +dtmp*qvec(iat)*dgamdr(:, iat)*cmat(iat, jat) + dadr_local(:, iat, jat)
+            dadr_local(:, jat, iat) = +dtmp*qvec(jat)*dgamdr(:, jat)*cmat(jat, iat) + dadr_local(:, jat, iat)
+            dadL_local(:, :, jat) = +dtmp*qvec(iat)*dgamdL(:, :)*cmat(iat, jat) + dadL_local(:, :, jat)
+            dadL_local(:, :, iat) = +dtmp*qvec(jat)*dgamdL(:, :)*cmat(jat, iat) + dadL_local(:, :, iat)
+
+            ! Capacitance derivative off-diagonal
+            dtmp = erf(sqrt(r2)*gam)/(sqrt(r2))
+            ! potentially switch indices for dcdr
+            atrace_local(:, iat) = -dtmp*qvec(jat)*dcdr(:, jat, iat) + atrace_local(:, iat)
+            atrace_local(:, jat) = -dtmp*qvec(iat)*dcdr(:, iat, jat) + atrace_local(:, jat)
+            dadr_local(:, iat, jat) = +dtmp*qvec(iat)*dcdr(:, iat, jat) + dadr_local(:, iat, jat)
+            dadr_local(:, jat, iat) = +dtmp*qvec(jat)*dcdr(:, jat, iat) + dadr_local(:, jat, iat)
+            dadL_local(:, :, jat) = +dtmp*qvec(iat)*dcdL(:, :, iat) + dadL_local(:, :, jat)
+            dadL_local(:, :, iat) = +dtmp*qvec(jat)*dcdL(:, :, jat) + dadL_local(:, :, iat)
+
+            ! Capacitance derivative diagonal
+            dtmp = (self%eta(izp) + self%kqeta(izp)*qloc(iat) + sqrt2pi/radi)*qvec(iat)
+            dadr_local(:, jat, iat) = -dtmp*dcdr(:, jat, iat) + dadr_local(:, jat, iat)
+            dtmp = (self%eta(jzp) + self%kqeta(jzp)*qloc(jat) + sqrt2pi/radj)*qvec(jat)
+            dadr_local(:, iat, jat) = -dtmp*dcdr(:, iat, jat) + dadr_local(:, iat, jat)
+         end do
+
+         ! Hardness derivative
+         dtmp = self%kqeta(izp)*qvec(iat)*cmat(iat, iat)
+         !atrace_local(:, iat) = +dtmp*dqlocdr(:, iat, iat) + atrace_local(:, iat)
+         dadr_local(:, :, iat) = +dtmp*dqlocdr(:, :, iat) + dadr_local(:, :, iat)
+         dadL_local(:, :, iat) = +dtmp*dqlocdL(:, :, iat) + dadL_local(:, :, iat)
+
+         ! Effective charge width derivative
+         dtmp = -sqrt2pi*dradi/(radi**2)*qvec(iat)*cmat(iat, iat)
+         !atrace_local(:, iat) = -dtmp*dcndr(:, iat, iat) + atrace_local(:, iat)
+         dadr_local(:, :, iat) = +dtmp*dcndr(:, :, iat) + dadr_local(:, :, iat)
+         dadL_local(:, :, iat) = +dtmp*dcndL(:, :, iat) + dadL_local(:, :, iat)
+
+         ! Capacitance derivative
+         dtmp = (self%eta(izp) + self%kqeta(izp)*qloc(iat) + sqrt2pi/radi)*qvec(iat)
+         !atrace_local(:, iat) = -dtmp*dcdr(:, iat, iat) + atrace_local(:, iat)
+         dadr_local(:, iat, iat) = +dtmp*dcdr(:, iat, iat) + dadr_local(:, iat, iat)
+         dadL_local(:, :, iat) = +dtmp*dcdL(:, :, iat) + dadL_local(:, :, iat)
+
+      end do
+      !$omp end do
+      !$omp critical (get_damat_0d_)
+      atrace(:, :) = atrace(:, :) + atrace_local(:, :)
+      dadr(:, :, :) = dadr(:, :, :) + dadr_local(:, :, :)
+      dadL(:, :, :) = dadL(:, :, :) + dadL_local(:, :, :)
+      !$omp end critical (get_damat_0d_)
+      deallocate(dadL_local, dadr_local, atrace_local)
+      !$omp end parallel
+
+   end subroutine get_damat_0d
+
+   subroutine get_cmat_0d(self, mol, cmat)
+      class(eeqbceps_model), intent(in) :: self
+      type(structure_type), intent(in) :: mol
+      real(wp), intent(out) :: cmat(:, :)
+
+      integer :: iat, jat, izp, jzp, isp, jsp
+      real(wp) :: vec(3), rvdw, tmp, capi, capj
+
+      ! Thread-private array for reduction
+      real(wp), allocatable :: cmat_local(:, :)
+   
+      cmat(:, :) = 0.0_wp
+   
+      !$omp parallel default(none) &
+      !$omp shared(cmat, mol, self) &
+      !$omp private(iat, izp, isp, jat, jzp, jsp) &
+      !$omp private(vec, rvdw, tmp, capi, capj, cmat_local)
+      allocate(cmat_local, source=cmat)
+      !$omp do schedule(runtime) 
+      do iat = 1, mol%nat
+         izp = mol%id(iat)
+         isp = mol%num(izp)
+         capi = self%cap(izp)
+         do jat = 1, iat - 1
+            jzp = mol%id(jat)
+            jsp = mol%num(jzp)
+            vec = mol%xyz(:, jat) - mol%xyz(:, iat)
+            rvdw = self%rvdw(iat, jat)
+            capj = self%cap(jzp)
+            call get_cpair(self%kbc, tmp, vec, rvdw, capi, capj)
+            ! Off-diagonal elements
+            cmat_local(jat, iat) = -tmp
+            cmat_local(iat, jat) = -tmp
+            ! Diagonal elements
+            cmat_local(iat, iat) = cmat_local(iat, iat) + tmp
+            cmat_local(jat, jat) = cmat_local(jat, jat) + tmp
+         end do
+      end do
+      !$omp end do
+      !$omp critical (get_cmat_0d_)
+      cmat(:, :) = cmat(:, :) + cmat_local(:, :)
+      !$omp end critical (get_cmat_0d_)
+      deallocate(cmat_local)
+      !$omp end parallel
+
+      cmat(mol%nat + 1, mol%nat + 1) = 1.0_wp
+
+   end subroutine get_cmat_0d
+
+   subroutine get_cpair(kbc, cpair, vec, rvdw, capi, capj)
+      real(wp), intent(in) :: vec(3), capi, capj, rvdw, kbc
+      real(wp), intent(out) :: cpair
+
+      real(wp) :: r2, arg
+
+      r2 = vec(1)**2 + vec(2)**2 + vec(3)**2
+      ! Capacitance of bond between atom i and j
+      arg = -kbc*(sqrt(r2) - rvdw)/rvdw
+      cpair = sqrt(capi*capj)*0.5_wp*(1.0_wp + erf(arg))
+   end subroutine get_cpair
+
+   subroutine get_dcmat_0d(self, mol, dcdr, dcdL)
+      class(eeqbceps_model), intent(in) :: self
+      type(structure_type), intent(in) :: mol
+      real(wp), intent(out) :: dcdr(:, :, :)
+      real(wp), intent(out) :: dcdL(:, :, :)
+
+      integer :: iat, jat, izp, jzp
+      real(wp) :: vec(3), r2, rvdw, dtmp, arg, dG(3), dS(3, 3), capi, capj
+
+      ! Thread-private arrays for reduction
+      real(wp), allocatable :: dcdr_local(:, :, :), dcdL_local(:, :, :)
+
+      dcdr(:, :, :) = 0.0_wp
+      dcdL(:, :, :) = 0.0_wp
+
+      !$omp parallel default(none) &
+      !$omp shared(dcdr, dcdL, mol, self) &
+      !$omp private(iat, izp, jat, jzp, r2, vec, rvdw) &
+      !$omp private(dG, dS, dtmp, arg, capi, capj) &
+      !$omp private(dcdr_local, dcdL_local)
+      allocate(dcdr_local, source=dcdr)
+      allocate(dcdL_local, source=dcdL)
+      !$omp do schedule(runtime)
+      do iat = 1, mol%nat
+         izp = mol%id(iat)
+         capi = self%cap(izp)
+         do jat = 1, iat - 1
+            jzp = mol%id(jat)
+            capj = self%cap(jzp)
+            vec = mol%xyz(:, jat) - mol%xyz(:, iat)
+            r2 = vec(1)**2 + vec(2)**2 + vec(3)**2
+            rvdw = self%rvdw(iat, jat)
+
+            ! Capacitance of bond between atom i and j
+            arg = -(self%kbc*(sqrt(r2) - rvdw)/rvdw)**2
+            dtmp = sqrt(capi*capj)* &
+               & self%kbc*exp(arg)/(sqrtpi*rvdw)
+            dG = dtmp*vec/sqrt(r2)
+            dS = spread(dG, 1, 3)*spread(vec, 2, 3)
+
+            ! Negative off-diagonal elements
+            dcdr_local(:, iat, jat) = -dG
+            dcdr_local(:, jat, iat) = +dG
+            ! Positive diagonal elements
+            dcdr_local(:, iat, iat) = +dG + dcdr_local(:, iat, iat)
+            dcdr_local(:, jat, jat) = -dG + dcdr_local(:, jat, jat)
+            dcdL_local(:, :, jat) = +dS + dcdL_local(:, :, jat)
+            dcdL_local(:, :, iat) = +dS + dcdL_local(:, :, iat)
+         end do
+      end do
+      !$omp end do
+      !$omp critical (get_dcmat_0d_)
+      dcdr(:, :, :) = dcdr(:, :, :) + dcdr_local(:, :, :)
+      dcdL(:, :, :) = dcdL(:, :, :) + dcdL_local(:, :, :)
+      !$omp end critical (get_dcmat_0d_)
+      deallocate(dcdL_local, dcdr_local)
+      !$omp end parallel
+
+   end subroutine get_dcmat_0d
+
+   subroutine write_2d_matrix(matrix, name, unit, step)
+      implicit none
+      real(wp), intent(in) :: matrix(:, :)
+      character(len=*), intent(in), optional :: name
+      integer, intent(in), optional :: unit
+      integer, intent(in), optional :: step
+      integer :: d1, d2
+      integer :: i, j, k, l, istep, iunit
+
+      d1 = size(matrix, dim=1)
+      d2 = size(matrix, dim=2)
+
+      if (present(unit)) then
+         iunit = unit
+      else
+         iunit = output_unit
+      end if
+
+      if (present(step)) then
+         istep = step
+      else
+         istep = 6
+      end if
+
+      if (present(name)) write (iunit, '(/,"matrix printed:",1x,a)') name
+
+      do i = 1, d2, istep
+         l = min(i + istep - 1, d2)
+         write (iunit, '(/,6x)', advance='no')
+         do k = i, l
+            write (iunit, '(6x,i7,3x)', advance='no') k
+         end do
+         write (iunit, '(a)')
+         do j = 1, d1
+            write (iunit, '(i6)', advance='no') j
+            do k = i, l
+               write (iunit, '(1x,f15.8)', advance='no') matrix(j, k)
+            end do
+            write (iunit, '(a)')
+         end do
+      end do
+
+   end subroutine write_2d_matrix
+
+   ! NOTE: the following is basically identical to tblite versions of this pattern
+
+   !> Inspect cache and reallocate it in case of type mismatch
+   subroutine taint(cache, ptr)
+      !> Instance of the cache
+      type(cache_container), target, intent(inout) :: cache
+      !> Reference to the cache
+      type(eeqbceps_cache), pointer, intent(out) :: ptr
+
+      if (allocated(cache%raw)) then
+         call view(cache, ptr)
+         if (associated(ptr)) return
+         deallocate (cache%raw)
+      end if
+
+      if (.not. allocated(cache%raw)) then
+         block
+            type(eeqbceps_cache), allocatable :: tmp
+            allocate (tmp)
+            call move_alloc(tmp, cache%raw)
+         end block
+      end if
+
+      call view(cache, ptr)
+   end subroutine taint
+
+   !> Return reference to cache after resolving its type
+   subroutine view(cache, ptr)
+      !> Instance of the cache
+      type(cache_container), target, intent(inout) :: cache
+      !> Reference to the cache
+      type(eeqbceps_cache), pointer, intent(out) :: ptr
+      nullify (ptr)
+      select type (target => cache%raw)
+      type is (eeqbceps_cache)
+         ptr => target
+      end select
+   end subroutine view
+
+end module multicharge_model_eeqbceps

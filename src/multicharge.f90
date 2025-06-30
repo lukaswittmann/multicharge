@@ -14,11 +14,12 @@
 ! limitations under the License.
 
 module multicharge
-   use multicharge_cutoff, only : get_lattice_points
+   use multicharge_charge, only : get_charges, get_eeq_charges, get_eeqbc_charges
    use multicharge_model, only : mchrg_model_type
    use multicharge_output, only : write_ascii_model, write_ascii_properties, &
       & write_ascii_results
-   use multicharge_param, only : new_eeq2019_model
+   use multicharge_param, only : new_eeq2019_model, new_eeqbc2024_model, &
+      new_eeqbceps2025_model, mchargeModel
    use multicharge_version, only : get_multicharge_version
    implicit none
    public
