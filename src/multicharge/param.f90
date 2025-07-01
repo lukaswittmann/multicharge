@@ -239,10 +239,10 @@ contains
       n = size(num)
       allocate(param(n))
       do i = 1, n
-         if (num(i) < 1 .or. num(i) > 103) then
+         if (num(i) < 0 .or. num(i) > 103) then
             error stop 'Invalid atomic number:'
          end if
-         param(i) = raw_param(num(i))
+         param(i) = raw_param(num(i)-1)
       end do
 
    end function read_param_file
