@@ -34,15 +34,16 @@ program main
    class(mchrg_model_type), allocatable :: model
    logical :: grad, json, exist
    real(wp), parameter :: cn_max = 8.0_wp, cutoff = 25.0_wp
-   real(wp), allocatable :: cn(:), rcov(:), trans(:, :)
+   real(wp), allocatable :: cn(:), trans(:, :)
    real(wp), allocatable :: qloc(:)
    real(wp), allocatable :: dcndr(:, :, :), dcndL(:, :, :), dqlocdr(:, :, :), dqlocdL(:, :, :)
    real(wp), allocatable :: energy(:), gradient(:, :), sigma(:, :)
    real(wp), allocatable :: qvec(:)
    real(wp), allocatable :: dqdr(:, :, :), dqdL(:, :, :)
    real(wp), allocatable :: charge, epsilon
+   character(len=:), allocatable :: path
 
-   call get_arguments(input, model_id, input_format, grad, charge, epsilon, json, error)
+   call get_arguments(input, model_id, input_format, grad, charge, epsilon, path, json, error)
    if (allocated(error)) then
       write (error_unit, '(a)') error%message
       error stop
@@ -85,7 +86,8 @@ program main
    else if (model_id == mchargeModel%eeqbc2024) then
       call new_eeqbc2024_model(mol, model, error)
    else if (model_id == mchargeModel%eeqbceps2025) then
-      call new_eeqbceps2025_model(mol, model, error, epsilon=epsilon)
+      call new_eeqbceps2025_model(mol, model, error, epsilon=epsilon, &
+         & paramspath=path)
    else
       call fatal_error(error, "Invalid model was choosen.")
    end if
@@ -172,7 +174,7 @@ contains
 
    end subroutine version
 
-   subroutine get_arguments(input, model_id, input_format, grad, charge, epsilon, &
+   subroutine get_arguments(input, model_id, input_format, grad, charge, epsilon, path, &
       & json, error)
 
       !> Input file name
@@ -195,6 +197,9 @@ contains
 
       !> Epsilon for eeqbceps2025 model
       real(wp), allocatable, intent(out) :: epsilon
+
+      !> Path to the parameters file
+      character(len=:), allocatable, intent(out) :: path
 
       !> Error handling
       type(error_type), allocatable, intent(out) :: error
@@ -262,6 +267,15 @@ contains
                call fatal_error(error, "Epsilon must be greater than one")
                exit
             end if
+         case ("-p", "-path", "--path")
+            iarg = iarg + 1
+            call get_argument(iarg, arg)
+            if (.not. allocated(arg)) then
+               call fatal_error(error, "Missing argument for path")
+               exit
+            end if
+            allocate (path, source=arg)
+            call move_alloc(arg, path)
          case ("-i", "-input", "--input")
             iarg = iarg + 1
             call get_argument(iarg, arg)

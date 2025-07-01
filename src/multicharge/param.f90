@@ -131,7 +131,7 @@ contains
 
    end subroutine new_eeqbc2024_model
 
-   subroutine new_eeqbceps2025_model(mol, model, error, epsilon)
+   subroutine new_eeqbceps2025_model(mol, model, error, epsilon, paramspath)
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
       !> Electronegativity equilibration model
@@ -140,6 +140,8 @@ contains
       type(error_type), allocatable, intent(out) :: error
       !> Epsilon for the implicit Born model
       real(wp), optional, intent(in) :: epsilon
+      !> Path to the parameters file
+      character(len=*), optional, intent(in) :: paramspath
 
       real(wp), parameter :: kcnrad = 0.14_wp
       real(wp), parameter :: kbc = 0.60_wp
@@ -150,18 +152,32 @@ contains
       real(wp), allocatable :: chi(:), eta(:), rad(:), kcnchi(:), &
          & kqchi(:), kqeta(:), cap(:), rcov(:), avg_cn(:), en(:), &
          & rvdw(:, :), radii(:), eps
+
       type(eeqbceps_model), allocatable :: eeqbceps
 
-      chi = get_eeqbceps_chi(mol%num)
-      eta = get_eeqbceps_eta(mol%num)
-      rad = get_eeqbceps_rad(mol%num)
-      kcnchi = get_eeqbceps_kcnchi(mol%num)
-      kqchi = get_eeqbceps_kqchi(mol%num)
-      kqeta = get_eeqbceps_kqeta(mol%num)
-      cap = get_eeqbceps_cap(mol%num)
-      rcov = get_eeqbceps_cov_radii(mol%num)
+      if (present(paramspath)) then
+         chi = read_param_file(paramspath // 'chi.txt', mol%num)
+         eta = read_param_file(paramspath // 'eta.txt', mol%num)
+         rad = read_param_file(paramspath // 'rad.txt', mol%num)
+         kcnchi = read_param_file(paramspath // 'kcnchi.txt', mol%num)
+         kqchi = read_param_file(paramspath // 'kqchi.txt', mol%num)
+         kqeta = read_param_file(paramspath // 'kqeta.txt', mol%num)
+         cap = read_param_file(paramspath // 'cap.txt', mol%num)
+         rcov = read_param_file(paramspath // 'rcov.txt', mol%num)
+         radii = read_param_file(paramspath // 'radii.txt', mol%num)
+      else
+         chi = get_eeqbceps_chi(mol%num)
+         eta = get_eeqbceps_eta(mol%num)
+         rad = get_eeqbceps_rad(mol%num)
+         kcnchi = get_eeqbceps_kcnchi(mol%num)
+         kqchi = get_eeqbceps_kqchi(mol%num)
+         kqeta = get_eeqbceps_kqeta(mol%num)
+         cap = get_eeqbceps_cap(mol%num)
+         rcov = get_eeqbceps_cov_radii(mol%num)
+         radii = get_eeqbceps_born_radii(mol%num)
+      end if
+
       avg_cn = get_eeqbceps_avg_cn(mol%num)
-      radii = get_eeqbceps_born_radii(mol%num)
       
       if (present(epsilon)) then
          ! Use the provided epsilon value
@@ -195,5 +211,41 @@ contains
       call move_alloc(eeqbceps, model)
 
    end subroutine new_eeqbceps2025_model
+
+
+   function read_param_file(filename, num) result(param)
+      !> Read a parameter file and return the parameters
+      character(len=*), intent(in) :: filename
+      !> Atomic numbers of the elements
+      integer, intent(in) :: num(:)
+      !> Parameters read from the file
+      real(wp), allocatable :: param(:), raw_param(:)
+
+
+      integer :: i, n, io
+      character(len=256) :: line
+      open(unit=10, file=filename, action='read')
+      read(10, '(A)') line
+      allocate(raw_param(103))
+      do i = 1, 103
+         read(10, '(F20.10)', iostat=io) raw_param(i)
+         if (i /= 103 .and. io /= 0) then
+            close(10)
+            error stop 'Error reading parameter file: '//trim(filename)
+         end if
+      end do
+      close(10)
+
+      n = size(num)
+      allocate(param(n))
+      do i = 1, n
+         if (num(i) < 1 .or. num(i) > 103) then
+            error stop 'Invalid atomic number:'
+         end if
+         param(i) = raw_param(num(i))
+      end do
+
+   end function read_param_file
+
 
 end module multicharge_param

@@ -91,7 +91,7 @@ module multicharge_param_eeqbceps2025
    integer, parameter :: max_elem = 103
 
    !> Element-specific electronegativity for the eeqbceps charges
-   real(wp), parameter :: eeqbceps_chi(max_elem) = 4.0_wp * [&
+   real(wp) :: eeqbceps_chi(max_elem) = 4.0_wp * [&
       &  1.7500687479_wp, 0.7992983109_wp, 0.8817302909_wp, 1.2122559922_wp, & !1-4
       &  1.4042606312_wp, 1.7373300176_wp, 1.9224220861_wp, 2.0295674708_wp, & !5-8
       &  2.0914017724_wp, 0.2783743672_wp, 0.7909141712_wp, 0.9333749946_wp, & !9-12
@@ -120,7 +120,7 @@ module multicharge_param_eeqbceps2025
       &  0.6325513112_wp, 0.6472558662_wp, 0.6679573735_wp] !101-103
 
    !> Element-specific chemical hardnesses for the eeqbceps charges
-   real(wp), parameter :: eeqbceps_eta(max_elem) = [&
+   real(wp) :: eeqbceps_eta(max_elem) = [&
       &  0.3572813340_wp, 14.1713349136_wp, -0.0335574715_wp, -2.2617753890_wp, & !1-4
       & -2.9993990603_wp, -2.8456422314_wp, -2.2316836385_wp, -0.9048085573_wp, & !5-8
       & -3.3402942035_wp, 11.6677100883_wp, 0.0461110187_wp, -0.1623149426_wp, & !9-12
@@ -149,7 +149,7 @@ module multicharge_param_eeqbceps2025
       & -0.8827968003_wp, -1.1120373389_wp, -1.3632576292_wp] !101-103
 
    !> Element-specific charge widths for the eeqbceps charges
-   real(wp), parameter :: eeqbceps_rad(max_elem) = [&
+   real(wp) :: eeqbceps_rad(max_elem) = [&
       &  0.4537866920_wp, 0.8971879958_wp, 0.3987756594_wp, 0.2435934990_wp, & !1-4
       &  0.2119711703_wp, 0.2064066867_wp, 0.2398313485_wp, 0.3482853216_wp, & !5-8
       &  0.1479057386_wp, 1.4433940527_wp, 0.6317031456_wp, 0.7152255265_wp, & !9-12
@@ -178,7 +178,7 @@ module multicharge_param_eeqbceps2025
       &  0.3323148016_wp, 0.3025789719_wp, 0.2898333718_wp] !101-103
 
    !> Element-specific CN scaling of the electronegativity for the eeqbceps charges
-   real(wp), parameter :: eeqbceps_kcnchi(max_elem) = [&
+   real(wp) :: eeqbceps_kcnchi(max_elem) = [&
       &  1.3415783494_wp, 2.4226307746_wp, 0.0910702713_wp, -0.2802662922_wp, & !1-4
       & -0.0464303067_wp, 0.3049790613_wp, 0.5014914830_wp, 0.7131712513_wp, & !5-8
       &  1.5978006993_wp, 4.6934800245_wp, -0.2311835622_wp, -0.5722047540_wp, & !9-12
@@ -207,7 +207,7 @@ module multicharge_param_eeqbceps2025
       & -0.0110341184_wp, 0.3546860955_wp, 0.7702661151_wp] !101-103
 
    !> Element-specific local q scaling of the electronegativity for the eeqbceps charges
-   real(wp), parameter :: eeqbceps_kqchi(max_elem) = [&
+   real(wp) :: eeqbceps_kqchi(max_elem) = [&
       &  0.7122604774_wp, -1.7351284097_wp, 3.0089829052_wp, 2.1166762050_wp, & !1-4
       &  1.5179774898_wp, 1.2180269092_wp, 1.0873609014_wp, 0.8994075937_wp, & !5-8
       &  0.1658248786_wp, -2.5747028940_wp, 3.1762170214_wp, 2.3987338612_wp, & !9-12
@@ -236,7 +236,7 @@ module multicharge_param_eeqbceps2025
       &  2.9446285619_wp, 2.8926208030_wp, 2.8267301797_wp] !101-103
 
    !> Element-specific local q scaling of the chemical hardness for the eeqbceps charges
-   real(wp), parameter :: eeqbceps_kqeta(max_elem) = [&
+   real(wp) :: eeqbceps_kqeta(max_elem) = [&
       &  1.8222099473_wp, -0.2575679643_wp, 0.4393826724_wp, 1.1102162003_wp, & !1-4
       &  1.2310070946_wp, 0.9818102022_wp, 0.1502230497_wp, 0.4134119032_wp, & !5-8
       &  2.5030512016_wp, -0.4998596384_wp, 2.1023399046_wp, 1.1266337899_wp, & !9-12
@@ -265,7 +265,7 @@ module multicharge_param_eeqbceps2025
       &  0.7494327996_wp, 0.7131747852_wp, 0.6619055639_wp] !101-103
 
    !> Element-specific bond capacitance for the eeqbceps charges
-   real(wp), parameter :: eeqbceps_cap(max_elem) = [&
+   real(wp) :: eeqbceps_cap(max_elem) = [&
       &  3.4358731613_wp, 0.2563012350_wp, 1.7336935111_wp, 1.4252599447_wp, & !1-4
       &  1.9821377790_wp, 7.9575330990_wp, 5.2650283958_wp, 5.3394223720_wp, & !5-8
       &  4.7702507597_wp, 0.5095753028_wp, 5.7961811482_wp, 2.8738819069_wp, & !9-12
@@ -294,7 +294,7 @@ module multicharge_param_eeqbceps2025
       &  1.3426719030_wp, 1.2779769455_wp, 1.1930672532_wp] !101-103
 
    !> Element-specific covalent radii for the CN for the eeqbceps charges
-   real(wp), parameter :: eeqbceps_cov_radii(max_elem) = 0.5_wp*[&
+   real(wp) :: eeqbceps_cov_radii(max_elem) = 0.5_wp*[&
       &  1.1980006149_wp, 2.2610217725_wp, 2.3787175190_wp, 2.4632164676_wp, & !1-4
       &  2.4613895807_wp, 2.6763007964_wp, 2.7655085211_wp, 2.6466398902_wp, & !5-8
       &  2.0647114131_wp, 2.2964278893_wp, 3.0473595746_wp, 3.3597126173_wp, & !9-12
@@ -351,8 +351,8 @@ module multicharge_param_eeqbceps2025
       &  1.7549800000_wp, 1.7549800000_wp, 1.7549800000_wp, 1.7549800000_wp, & !97-100
       &  1.7549800000_wp, 1.7549800000_wp, 1.7549800000_wp] !101-103
 
-   !> Get the born radii for the eeqbceps charges
-   real(wp), parameter :: eeqbceps_born_radii(max_elem) = 1.33_wp*[&
+   !> Element-specific born radii for the eeqbceps charges
+   real(wp) :: eeqbceps_born_radii(max_elem) = 1.33_wp*[&
       &  1.1980006149_wp, 2.2610217725_wp, 2.3787175190_wp, 2.4632164676_wp, & !1-4
       &  2.4613895807_wp, 2.6763007964_wp, 2.7655085211_wp, 2.6466398902_wp, & !5-8
       &  2.0647114131_wp, 2.2964278893_wp, 3.0473595746_wp, 3.3597126173_wp, & !9-12
