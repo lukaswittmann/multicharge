@@ -225,7 +225,6 @@ contains
       integer :: i, n, io
       character(len=256) :: line
       open(unit=10, file=filename, action='read')
-      read(10, '(A)') line
       allocate(raw_param(103))
       do i = 1, 103
          read(10, '(F20.10)', iostat=io) raw_param(i)
@@ -236,13 +235,16 @@ contains
       end do
       close(10)
 
+      write(*, '(A)') 'Read parameters from: '//trim(filename)
+
       n = size(num)
       allocate(param(n))
       do i = 1, n
          if (num(i) < 0 .or. num(i) > 103) then
             error stop 'Invalid atomic number:'
          end if
-         param(i) = raw_param(num(i)-1)
+         param(i) = raw_param(num(i))
+         write(*, *) num(i), param(i)
       end do
 
    end function read_param_file
