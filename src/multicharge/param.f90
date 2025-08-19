@@ -33,7 +33,7 @@ module multicharge_param
    implicit none
    private
 
-   public :: new_eeq2019_model, new_eeqbc2024_model, new_eeqbceps2025_model, mchargeModel
+   public :: new_eeq2019_model, new_eeqbc2025_model, new_eeqbceps2025_model, mchargeModel
 
    !> Possible charge models enumerator
    type :: TMchargeModelEnum
@@ -79,7 +79,7 @@ contains
 
    end subroutine new_eeq2019_model
 
-   subroutine new_eeqbc2024_model(mol, model, error)
+   subroutine new_eeqbc2025_model(mol, model, error)
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
       !> Electronegativity equilibration model
@@ -129,7 +129,7 @@ contains
          & norm_exp=norm_exp, rvdw=rvdw)
       call move_alloc(eeqbc, model)
 
-   end subroutine new_eeqbc2024_model
+   end subroutine new_eeqbc2025_model
 
    subroutine new_eeqbceps2025_model(mol, model, error, epsilon)
       !> Molecular structure data

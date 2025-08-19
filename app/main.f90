@@ -19,7 +19,7 @@ program main
    use mctc_io, only: structure_type, read_structure, filetype, get_filetype
    use mctc_cutoff, only : get_lattice_points
    use multicharge, only: mchrg_model_type, mchargeModel, new_eeq2019_model, &
-      & new_eeqbc2024_model, new_eeqbceps2025_model, get_multicharge_version, &
+      & new_eeqbc2025_model, new_eeqbceps2025_model, get_multicharge_version, &
       & write_ascii_model, write_ascii_properties, write_ascii_results
    use multicharge_output, only: json_results
    implicit none
@@ -83,7 +83,7 @@ program main
    if (model_id == mchargeModel%eeq2019) then
       call new_eeq2019_model(mol, model, error)
    else if (model_id == mchargeModel%eeqbc2024) then
-      call new_eeqbc2024_model(mol, model, error)
+      call new_eeqbc2025_model(mol, model, error)
    else if (model_id == mchargeModel%eeqbceps2025) then
       call new_eeqbceps2025_model(mol, model, error, epsilon=epsilon)
    else
