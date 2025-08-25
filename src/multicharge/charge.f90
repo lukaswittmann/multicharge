@@ -132,7 +132,7 @@ end subroutine get_eeqbc_charges
 
 
 !> Obtain charges from the epsilon dependent electronegativity equilibration model
-subroutine get_eeqbceps_charges(mol, epsilon, error, qvec, dqdr, dqdL)
+subroutine get_eeqbceps_charges(mol, epsilon, error, qvec, bornradscal, dqdr, dqdL)
 
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
@@ -152,9 +152,13 @@ subroutine get_eeqbceps_charges(mol, epsilon, error, qvec, dqdr, dqdL)
    !> Derivative of the partial charges w.r.t. strain deformations
    real(wp), intent(out), contiguous, optional :: dqdL(:, :, :)
 
+   real(wp), intent(in) :: bornradscal
+
    class(mchrg_model_type), allocatable :: eeqbceps_model
 
-   call new_eeqbceps2025_model(mol, eeqbceps_model, error, epsilon=epsilon)
+
+   call new_eeqbceps2025_model(mol, eeqbceps_model, error, epsilon=epsilon, &
+      bornradscal=bornradscal)
 
    call get_charges(eeqbceps_model, mol, error, qvec, dqdr, dqdL)
 

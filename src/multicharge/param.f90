@@ -131,7 +131,7 @@ contains
 
    end subroutine new_eeqbc2025_model
 
-   subroutine new_eeqbceps2025_model(mol, model, error, epsilon)
+   subroutine new_eeqbceps2025_model(mol, model, error, epsilon, bornradscal)
       !> Molecular structure data
       type(structure_type), intent(in) :: mol
       !> Electronegativity equilibration model
@@ -140,6 +140,8 @@ contains
       type(error_type), allocatable, intent(out) :: error
       !> Epsilon for the implicit Born model
       real(wp), optional, intent(in) :: epsilon
+      !> Scaling factor for the Born radii
+      real(wp), optional, intent(in) :: bornradscal
 
       real(wp), parameter :: kcnrad = 0.14_wp
       real(wp), parameter :: kbc = 0.60_wp
@@ -161,7 +163,13 @@ contains
       cap = get_eeqbceps_cap(mol%num)
       rcov = get_eeqbceps_cov_radii(mol%num)
       avg_cn = get_eeqbceps_avg_cn(mol%num)
-      radii = get_eeqbceps_born_radii(mol%num)
+
+      ! Get the Born radii and apply scaling if provided
+      if (present(bornradscal)) then
+         radii = get_eeqbceps_born_radii(mol%num) * bornradscal
+      else
+         radii = get_eeqbceps_born_radii(mol%num)
+      end if
       
       if (present(epsilon)) then
          ! Use the provided epsilon value
