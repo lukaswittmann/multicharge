@@ -22,8 +22,9 @@ module multicharge_charge
    use mctc_env, only : error_type, wp
    use mctc_io, only : structure_type
    use mctc_cutoff, only : get_lattice_points
-   use multicharge_model, only : mchrg_model_type
+   use multicharge_model, only : mchrg_model_type, eeqbceps_model
    use multicharge_param, only : new_eeq2019_model, new_eeqbc2025_model, new_eeqbceps2025_model
+   use multicharge_param_eeqbceps2025, only: get_eeqbceps_rad, get_eeqbceps_avg_cn
    implicit none
    private
 
@@ -34,7 +35,7 @@ contains
 
 
 !> Classical electronegativity equilibration charges
-subroutine get_charges(mchrg_model, mol, error, qvec, dqdr, dqdL)
+subroutine get_charges(mchrg_model, mol, error, qvec, dqdr, dqdL, cnout)
 
    !> Multicharge model
    class(mchrg_model_type), intent(in) :: mchrg_model
@@ -53,6 +54,8 @@ subroutine get_charges(mchrg_model, mol, error, qvec, dqdr, dqdL)
 
    !> Derivative of the partial charges w.r.t. strain deformations
    real(wp), intent(out), contiguous, optional :: dqdL(:, :, :)
+
+   real(wp), allocatable, optional :: cnout(:)
 
    logical :: grad
    real(wp), allocatable :: cn(:), dcndr(:, :, :), dcndL(:, :, :)
@@ -73,6 +76,10 @@ subroutine get_charges(mchrg_model, mol, error, qvec, dqdr, dqdL)
 
    call mchrg_model%solve(mol, error, cn, qloc, dcndr, dcndL, dqlocdr, dqlocdL, &
       & qvec=qvec, dqdr=dqdr, dqdL=dqdL)
+
+   if (present(cnout)) then
+      cnout = cn
+   end if
 
 end subroutine get_charges
 
@@ -132,7 +139,7 @@ end subroutine get_eeqbc_charges
 
 
 !> Obtain charges from the epsilon dependent electronegativity equilibration model
-subroutine get_eeqbceps_charges(mol, epsilon, error, qvec, bornradscal, dqdr, dqdL)
+subroutine get_eeqbceps_charges(mol, epsilon, error, qvec, ai, bornradscal, dqdr, dqdL, cnout)
 
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
@@ -152,15 +159,49 @@ subroutine get_eeqbceps_charges(mol, epsilon, error, qvec, bornradscal, dqdr, dq
    !> Derivative of the partial charges w.r.t. strain deformations
    real(wp), intent(out), contiguous, optional :: dqdL(:, :, :)
 
-   real(wp), intent(in) :: bornradscal
+   real(wp), allocatable, optional :: cnout(:)
+
+   real(wp), intent(out), allocatable, optional :: ai(:)
+
+   real(wp), intent(in), optional :: bornradscal
 
    class(mchrg_model_type), allocatable :: eeqbceps_model
 
+  real(wp), allocatable :: cn(:)
+  real(wp), allocatable :: trans(:,:)
+  
+  ! locals for optional ai computation
+  real(wp), allocatable :: rad(:), avg_cn(:)
+  real(wp) :: norm_cn, radi
+  real(wp), parameter :: kcnrad = 0.14_wp
+  real(wp), parameter :: norm_exp = 0.75_wp
+  integer :: iat, izp
 
    call new_eeqbceps2025_model(mol, eeqbceps_model, error, epsilon=epsilon, &
       bornradscal=bornradscal)
 
-   call get_charges(eeqbceps_model, mol, error, qvec, dqdr, dqdL)
+   allocate(cn(mol%nat))
+   call get_lattice_points(mol%periodic, mol%lattice, eeqbceps_model%ncoord%cutoff, trans)
+   call eeqbceps_model%ncoord%get_coordination_number(mol, trans, cn)
+
+   if (present(ai)) then
+      ! Compute ai the same way as eeqbceps_model%getradiiding would do
+      rad = get_eeqbceps_rad(mol%num)
+      avg_cn = get_eeqbceps_avg_cn(mol%num)
+      allocate(ai(mol%nat))
+      do iat = 1, mol%nat
+         izp = mol%id(iat)
+         norm_cn = 1.0_wp / avg_cn(izp)**norm_exp
+         radi = rad(izp) * (1.0_wp - kcnrad*cn(iat)*norm_cn)
+         ai(iat) = radi
+      end do
+   end if
+
+   call get_charges(eeqbceps_model, mol, error, qvec, dqdr, dqdL, cnout=cnout)
+
+   deallocate(cn)
+   if (allocated(trans)) deallocate(trans)
+
 
 end subroutine get_eeqbceps_charges
 

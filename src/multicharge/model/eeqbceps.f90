@@ -71,7 +71,12 @@ module multicharge_model_eeqbceps
       real(wp), allocatable :: radii(:)
       !> Epsilon for the implicit Born model
       real(wp) :: eps
+
+      !> Final ai atomic Gaussian widths
+      real(wp), allocatable :: ai(:)
+
    contains
+      procedure :: getradiiding
       !> Update and allocate cache
       procedure :: update
       !> Calculate Coulomb matrix
@@ -346,6 +351,27 @@ contains
       end if
    end subroutine get_coulomb_matrix
 
+   subroutine getradiiding(self, mol, cn)
+      class(eeqbceps_model), intent(inout) :: self
+      type(structure_type), intent(in) :: mol
+      real(wp), intent(in) :: cn(:)
+
+      integer :: iat, jat, izp, jzp
+      real(wp) :: norm_cn, radi
+
+      allocate(self%ai(mol%nat))
+
+      do iat = 1, mol%nat
+         izp = mol%id(iat)
+         ! Effective charge width of i
+         norm_cn = 1.0_wp / self%avg_cn(izp)**self%norm_exp
+         radi = self%rad(izp) * (1.0_wp - self%kcnrad*cn(iat)*norm_cn)
+
+         self%ai(iat) = radi
+      end do
+
+   end subroutine getradiiding
+
    subroutine get_amat_0d(self, mol, cn, qloc, cmat, amat)
       class(eeqbceps_model), intent(in) :: self
       type(structure_type), intent(in) :: mol
@@ -365,6 +391,7 @@ contains
    
       feps = (1.0_wp - 1.0_wp/self%eps)
 
+
       !!$omp parallel default(none) &
       !!$omp shared(amat, mol, self, cn, qloc, cmat) &
       !!$omp private(iat, izp, jat, jzp, gam2, vec, r2, tmp) &
@@ -376,6 +403,7 @@ contains
          ! Effective charge width of i
          norm_cn = 1.0_wp / self%avg_cn(izp)**self%norm_exp
          radi = self%rad(izp) * (1.0_wp - self%kcnrad*cn(iat)*norm_cn)
+
          do jat = 1, iat - 1
             jzp = mol%id(jat)
             vec = mol%xyz(:, jat) - mol%xyz(:, iat)
