@@ -35,7 +35,7 @@ contains
 
 
 !> Classical electronegativity equilibration charges
-subroutine get_charges(mchrg_model, mol, error, qvec, dqdr, dqdL, cnout)
+subroutine get_charges(mchrg_model, mol, error, qvec, dqdr, dqdL)
 
    !> Multicharge model
    class(mchrg_model_type), intent(in) :: mchrg_model
@@ -54,8 +54,6 @@ subroutine get_charges(mchrg_model, mol, error, qvec, dqdr, dqdL, cnout)
 
    !> Derivative of the partial charges w.r.t. strain deformations
    real(wp), intent(out), contiguous, optional :: dqdL(:, :, :)
-
-   real(wp), allocatable, optional :: cnout(:)
 
    logical :: grad
    real(wp), allocatable :: cn(:), dcndr(:, :, :), dcndL(:, :, :)
@@ -76,10 +74,6 @@ subroutine get_charges(mchrg_model, mol, error, qvec, dqdr, dqdL, cnout)
 
    call mchrg_model%solve(mol, error, cn, qloc, dcndr, dcndL, dqlocdr, dqlocdL, &
       & qvec=qvec, dqdr=dqdr, dqdL=dqdL)
-
-   if (present(cnout)) then
-      cnout = cn
-   end if
 
 end subroutine get_charges
 
@@ -139,7 +133,7 @@ end subroutine get_eeqbc_charges
 
 
 !> Obtain charges from the epsilon dependent electronegativity equilibration model
-subroutine get_eeqbceps_charges(mol, epsilon, error, qvec, ai, bornradscal, dqdr, dqdL, cnout)
+subroutine get_eeqbceps_charges(mol, epsilon, error, qvec, aI, bornradscal, dqdr, dqdL)
 
    !> Molecular structure data
    type(structure_type), intent(in) :: mol
@@ -158,8 +152,6 @@ subroutine get_eeqbceps_charges(mol, epsilon, error, qvec, ai, bornradscal, dqdr
 
    !> Derivative of the partial charges w.r.t. strain deformations
    real(wp), intent(out), contiguous, optional :: dqdL(:, :, :)
-
-   real(wp), allocatable, optional :: cnout(:)
 
    real(wp), intent(out), allocatable, optional :: ai(:)
 
@@ -197,11 +189,7 @@ subroutine get_eeqbceps_charges(mol, epsilon, error, qvec, ai, bornradscal, dqdr
       end do
    end if
 
-   call get_charges(eeqbceps_model, mol, error, qvec, dqdr, dqdL, cnout=cnout)
-
-   deallocate(cn)
-   if (allocated(trans)) deallocate(trans)
-
+   call get_charges(eeqbceps_model, mol, error, qvec, dqdr, dqdL)
 
 end subroutine get_eeqbceps_charges
 

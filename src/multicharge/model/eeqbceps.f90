@@ -351,27 +351,6 @@ contains
       end if
    end subroutine get_coulomb_matrix
 
-   subroutine getradiiding(self, mol, cn)
-      class(eeqbceps_model), intent(inout) :: self
-      type(structure_type), intent(in) :: mol
-      real(wp), intent(in) :: cn(:)
-
-      integer :: iat, jat, izp, jzp
-      real(wp) :: norm_cn, radi
-
-      allocate(self%ai(mol%nat))
-
-      do iat = 1, mol%nat
-         izp = mol%id(iat)
-         ! Effective charge width of i
-         norm_cn = 1.0_wp / self%avg_cn(izp)**self%norm_exp
-         radi = self%rad(izp) * (1.0_wp - self%kcnrad*cn(iat)*norm_cn)
-
-         self%ai(iat) = radi
-      end do
-
-   end subroutine getradiiding
-
    subroutine get_amat_0d(self, mol, cn, qloc, cmat, amat)
       class(eeqbceps_model), intent(in) :: self
       type(structure_type), intent(in) :: mol
@@ -390,6 +369,8 @@ contains
       amat(:, :) = 0.0_wp
    
       feps = (1.0_wp - 1.0_wp/self%eps)
+
+      write(*, '(A, F8.3)') '[Debug] Using eeqbceps with feps: ', feps
 
 
       !!$omp parallel default(none) &
@@ -416,20 +397,21 @@ contains
             ! ! Coulomb interaction of Gaussian charges
             ! gam2 = 1.0_wp / (radi**2 + radj**2)
             ! tmp = erf(sqrt(r2*gam2)) / sqrt(r2) * cmat(jat, iat)
-            
+
             
             ! standard erf-kernel
             gam2   = 1.0_wp/(radi**2 + radj**2)
             Jij    = erf(sqrt(r2*gam2)) / sqrt(r2)
+
             ! GB reaction kernel
             aiaj   = self%radii(izp)*self%radii(jzp)
             expfac = exp(-r2/(4.0_wp*aiaj))
             fGB2   = r2 + aiaj*expfac
             Fij    = feps / sqrt(fGB2)
+            
             ! subtract GB from Coulomb kernel
             tmp    = (Jij - Fij) * cmat(jat, iat)
                         
-            
             amat_local(jat, iat) = amat_local(jat, iat) + tmp
             amat_local(iat, jat) = amat_local(iat, jat) + tmp
          end do
@@ -440,7 +422,7 @@ contains
          ! Vacuum self‐term J_ii
          Jii = sqrt2pi / radi
          ! Reaction self‐term F_ii
-         Fii = (1.0_wp - 1.0_wp/self%eps) / self%radii(izp)
+         Fii = feps / self%radii(izp)
          ! Effective hardness
          tmp = self%eta(izp) + self%kqeta(izp) * qloc(iat) &
             + Jii - Fii
@@ -459,6 +441,27 @@ contains
       amat(mol%nat + 1, mol%nat + 1) = 0.0_wp
 
    end subroutine get_amat_0d
+
+   subroutine getradiiding(self, mol, cn)
+      class(eeqbceps_model), intent(inout) :: self
+      type(structure_type), intent(in) :: mol
+      real(wp), intent(in) :: cn(:)
+
+      integer :: iat, jat, izp, jzp
+      real(wp) :: norm_cn, radi
+
+      allocate(self%ai(mol%nat))
+
+      do iat = 1, mol%nat
+         izp = mol%id(iat)
+         ! Effective charge width of i
+         norm_cn = 1.0_wp / self%avg_cn(izp)**self%norm_exp
+         radi = self%rad(izp) * (1.0_wp - self%kcnrad*cn(iat)*norm_cn)
+
+         self%ai(iat) = radi
+      end do
+
+   end subroutine getradiiding
 
    subroutine get_coulomb_derivs(self, mol, cache, qvec, dadr, dadL, atrace)
       class(eeqbceps_model), intent(in) :: self

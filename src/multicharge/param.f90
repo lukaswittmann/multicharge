@@ -154,21 +154,31 @@ contains
          & rvdw(:, :), radii(:), eps
       type(eeqbceps_model), allocatable :: eeqbceps
 
-      chi = get_eeqbceps_chi(mol%num)
-      eta = get_eeqbceps_eta(mol%num)
-      rad = get_eeqbceps_rad(mol%num)
-      kcnchi = get_eeqbceps_kcnchi(mol%num)
-      kqchi = get_eeqbceps_kqchi(mol%num)
-      kqeta = get_eeqbceps_kqeta(mol%num)
-      cap = get_eeqbceps_cap(mol%num)
-      rcov = get_eeqbceps_cov_radii(mol%num)
-      avg_cn = get_eeqbceps_avg_cn(mol%num)
+      ! chi = get_eeqbceps_chi(mol%num)
+      ! eta = get_eeqbceps_eta(mol%num)
+      ! rad = get_eeqbceps_rad(mol%num)
+      ! kcnchi = get_eeqbceps_kcnchi(mol%num)
+      ! kqchi = get_eeqbceps_kqchi(mol%num)
+      ! kqeta = get_eeqbceps_kqeta(mol%num)
+      ! cap = get_eeqbceps_cap(mol%num)
+      ! rcov = get_eeqbceps_cov_radii(mol%num)
+      ! avg_cn = get_eeqbceps_avg_cn(mol%num)
+
+      chi = get_eeqbc_chi(mol%num)
+      eta = get_eeqbc_eta(mol%num)
+      rad = get_eeqbc_rad(mol%num)
+      kcnchi = get_eeqbc_kcnchi(mol%num)
+      kqchi = get_eeqbc_kqchi(mol%num)
+      kqeta = get_eeqbc_kqeta(mol%num)
+      cap = get_eeqbc_cap(mol%num)
+      rcov = get_eeqbc_cov_radii(mol%num)
+      avg_cn = get_eeqbc_avg_cn(mol%num)
 
       ! Get the Born radii and apply scaling if provided
       if (present(bornradscal)) then
-         radii = get_eeqbceps_born_radii(mol%num) * bornradscal
+         radii = get_eeqbceps_cov_radii(mol%num) * bornradscal
       else
-         radii = get_eeqbceps_born_radii(mol%num)
+         radii = get_eeqbceps_cov_radii(mol%num)
       end if
       
       if (present(epsilon)) then
